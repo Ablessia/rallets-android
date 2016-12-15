@@ -27,24 +27,33 @@ import java.util.concurrent.TimeUnit
 
 import android.annotation.SuppressLint
 import android.app.Application
-import android.content.SharedPreferences
 import android.content.res.Configuration
-import android.os.{Build, LocaleList}
-import android.preference.PreferenceManager
+import android.os.{Build, Handler, LocaleList}
 import android.support.v7.app.AppCompatDelegate
-import android.util.Log
 import com.evernote.android.job.JobManager
 import com.github.shadowsocks.acl.DonaldTrump
-import com.github.shadowsocks.database.{DBHelper, Profile, ProfileManager}
 import com.github.shadowsocks.utils.CloseUtils._
 import com.github.shadowsocks.utils._
-import com.google.android.gms.analytics.{GoogleAnalytics, HitBuilders, StandardExceptionParser, Tracker}
-import com.google.android.gms.common.api.ResultCallback
-import com.google.android.gms.tagmanager.{ContainerHolder, TagManager}
-import com.j256.ormlite.logger.LocalLog
+import com.google.android.gms.analytics.{StandardExceptionParser, Tracker}
 import eu.chainfire.libsuperuser.Shell
 
 import scala.collection.mutable.ArrayBuffer
+import android.content.{Intent, SharedPreferences}
+import android.preference.PreferenceManager
+import android.util.Log
+import com.github.shadowsocks.database.{DBHelper, ProfileManager}
+import com.github.shadowsocks.utils.{Key, Utils}
+import com.google.android.gms.analytics.{GoogleAnalytics, HitBuilders}
+import com.google.android.gms.common.api.ResultCallback
+import com.google.android.gms.tagmanager.{ContainerHolder, TagManager}
+import com.j256.ormlite.logger.LocalLog
+import com.github.shadowsocks.database.Profile
+import com.rallets._
+import com.loopj.android.http.AsyncHttpResponseHandler
+import com.rallets.Model.Notification
+import com.umeng.analytics.MobclickAgent
+import cz.msebera.android.httpclient.Header
+import org.json.JSONObject
 
 object ShadowsocksApplication {
   var app: ShadowsocksApplication = _
@@ -86,7 +95,7 @@ class ShadowsocksApplication extends Application {
   def currentProfile: Option[Profile] = profileManager.getProfile(profileId)
 
   def switchProfile(id: Int): Profile = {
-    val result = profileManager.getProfile(id) getOrElse profileManager.createProfile()
+    val result = profileManager.getProfile(id) getOrElse profileManager.createOrUpdateProfile()
     profileId(result.id)
     result
   }
@@ -144,8 +153,73 @@ class ShadowsocksApplication extends Application {
     checkChineseLocale(newConfig)
   }
 
+  def ralletsNotification() {
+    if (settings.getString(Store.SESSION_ID, "") == "") {
+      RUtils.log("session_id is empty, skip notification")
+      return
+    }
+    RUtils.post("rallets_notification", RUtils.defaultParams, new AsyncHttpResponseHandler() {
+      override def onFailure(statusCode: Int, headers: Array[Header], responseBody: Array[Byte], error: Throwable): Unit = {
+        RUtils.log("rallets_notification failed")
+      }
+      override def onSuccess(statusCode: Int, headers: Array[Header], responseBody: Array[Byte]): Unit = {
+        val ret = new JSONObject(new String(responseBody))
+        RUtils.log("rallets_notification OK: " + ret.getBoolean("ok"))
+        val intent = new Intent(IntentID.ralletsNotification)
+        if (ret.getBoolean("ok")) {
+          RUtils.setConfigs(ret)
+          Notification.one = ret.toString()
+          MobclickAgent.onEvent(getApplicationContext, "Heartbeat")
+        } else {
+          RUtils.logout(null)
+          RUtils.clearUp()
+        }
+        sendBroadcast(intent)
+      }
+    })
+  }
+
+  private val notificationInterval = 120000
+  private val notificationHandler = new Handler()
+  private val notificationRunner: Runnable = new Runnable {
+    override def run(): Unit = {
+      try {
+        ralletsNotification()
+      } finally {
+        notificationHandler.postDelayed(notificationRunner, notificationInterval)
+      }
+    }
+  }
+
+  def startRepeatingTask() {
+    RUtils.log("shadowsocks: startRepeatingTask")
+    notificationRunner.run()
+  }
+
+  def stopRepeatingTask(): Unit = {
+    RUtils.log("shadowsocks: stopRepeatingTask")
+    notificationHandler.removeCallbacks(notificationRunner)
+  }
+
+  def getCurrentProcessName(): String = {
+    import android.app.ActivityManager
+    import android.content.Context
+    import scala.collection.JavaConversions._
+    val pid = android.os.Process.myPid
+    val manager = this.getSystemService(Context.ACTIVITY_SERVICE).asInstanceOf[ActivityManager]
+    for (processInfo <- manager.getRunningAppProcesses) {
+      if (processInfo.pid == pid) {
+        return processInfo.processName
+      }
+    }
+    return ""
+  }
+
   override def onCreate() {
     app = this
+    // TODO currently foreground and "bg" process will both start app, so there are two processes
+    // TODO repeating notification, have to ensure that notification is repeated only in the foreground process
+    startRepeatingTask()
     if (!BuildConfig.DEBUG) java.lang.System.setProperty(LocalLog.LOCAL_LOG_LEVEL_PROPERTY, "ERROR")
     AppCompatDelegate.setCompatVectorFromResourcesEnabled(true)
     checkChineseLocale(getResources.getConfiguration)
@@ -167,6 +241,8 @@ class ShadowsocksApplication extends Application {
           })
       }
     }
+
+    RUtils.clearUp()
     pending.setResultCallback(callback, 2, TimeUnit.SECONDS)
     JobManager.create(this).addJobCreator(DonaldTrump)
 

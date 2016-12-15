@@ -32,9 +32,9 @@ import com.github.shadowsocks.utils.{State, Utils}
 @TargetApi(24)
 final class ShadowsocksTileService extends TileService with ServiceBoundContext {
 
-  private lazy val iconIdle = Icon.createWithResource(this, R.drawable.ic_start_idle).setTint(0x80ffffff)
-  private lazy val iconBusy = Icon.createWithResource(this, R.drawable.ic_start_busy)
-  private lazy val iconConnected = Icon.createWithResource(this, R.drawable.ic_start_connected)
+  private lazy val iconIdle = Icon.createWithResource(this, R.drawable.ic_flash_off).setTint(0x80ffffff)
+  private lazy val iconBusy = Icon.createWithResource(this, R.drawable.ic_flash_off)
+  private lazy val iconConnected = Icon.createWithResource(this, R.drawable.ic_flash_on)
   private lazy val callback = new IShadowsocksServiceCallback.Stub {
     def trafficUpdated(profileId: Int, txRate: Long, rxRate: Long, txTotal: Long, rxTotal: Long): Unit = ()
     def stateChanged(state: Int, profileName: String, msg: String) {

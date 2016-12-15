@@ -52,6 +52,7 @@ class ProfileConfigFragment extends PreferenceFragment with OnMenuItemClickListe
       findPreference(Key.remotePort).setSummary("1337")
       findPreference(Key.password).setSummary("\u2022" * 32)
     }
+    findPreference(Key.name).setEnabled(false)
     isProxyApps = findPreference(Key.proxyApps).asInstanceOf[SwitchPreference]
     isProxyApps.setEnabled(Utils.isLollipopOrAbove || app.isNatEnabled)
     isProxyApps.setOnPreferenceClickListener(_ => {

@@ -101,6 +101,7 @@ object Utils {
   /**
     * Crack a command line.
     * Based on: https://github.com/apache/ant/blob/588ce1f/src/main/org/apache/tools/ant/types/Commandline.java#L471
+ *
     * @param toProcess the command line to process.
     * @return the command line broken into strings.
     * An empty or null toProcess parameter results in a zero sized ArrayBuffer.

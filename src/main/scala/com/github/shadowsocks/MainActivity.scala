@@ -20,8 +20,6 @@
 
 package com.github.shadowsocks
 
-import java.lang.System.currentTimeMillis
-import java.net.{HttpURLConnection, URL}
 import java.util.Locale
 
 import android.app.backup.BackupManager
@@ -37,10 +35,11 @@ import android.support.v4.content.ContextCompat
 import android.support.v7.app.AlertDialog
 import android.support.v7.content.res.AppCompatResources
 import android.support.v7.widget.RecyclerView.ViewHolder
+import android.support.v7.widget.Toolbar
 import android.text.TextUtils
 import android.util.Log
 import android.view.View
-import android.widget.{TextView, Toast}
+import android.widget.{ImageView, RelativeLayout, TextView, Toast}
 import com.github.jorgecastilloprz.FABProgressCircle
 import com.github.shadowsocks.ShadowsocksApplication.app
 import com.github.shadowsocks.acl.CustomRulesFragment
@@ -52,18 +51,35 @@ import com.mikepenz.crossfader.view.CrossFadeSlidingPaneLayout
 import com.mikepenz.materialdrawer.interfaces.ICrossfader
 import com.mikepenz.materialdrawer.model.PrimaryDrawerItem
 import com.mikepenz.materialdrawer.model.interfaces.IDrawerItem
-import com.mikepenz.materialdrawer.{Drawer, DrawerBuilder}
+import com.mikepenz.materialdrawer.model.{PrimaryDrawerItem, SecondaryDrawerItem, _}
+import com.mikepenz.materialdrawer.{AccountHeader, AccountHeaderBuilder, Drawer, DrawerBuilder}
+import com.loopj.android.http.{AsyncHttpResponseHandler, RequestParams}
+import com.rallets.Model.Notification
+import com.rallets._
+import cz.msebera.android.httpclient.Header
+import org.json.JSONObject
+import android.content.BroadcastReceiver
+import android.view.animation.{Animation, AnimationUtils}
+import com.pingplusplus.android.{Pingpp, PingppLog}
+import com.umeng.analytics.MobclickAgent
+
+trait TrafficCallback {
+  def update(txRate: Long, rxRate: Long, txTotal: Long, rxTotal: Long)
+}
 
 object MainActivity {
-  private final val TAG = "ShadowsocksMainActivity"
+  private final val TAG = "MainActivity"
   private final val REQUEST_CONNECT = 1
 
-  private final val DRAWER_PROFILES = 0L
+  private final val DRAWER_INTRO = 0L
   private final val DRAWER_GLOBAL_SETTINGS = 1L
   private final val DRAWER_RECOVERY = 2L
   private final val DRAWER_ABOUT = 3L
   private final val DRAWER_FAQ = 4L
   private final val DRAWER_CUSTOM_RULES = 5L
+  private final val DRAWER_ACCOUNT = 6L
+  private final val DRAWER_LOGOUT = 7L
+  private final val DRAWER_AGREEMENT = 8L
 }
 
 class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawerItemClickListener
@@ -72,63 +88,59 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
 
   // UI
   private val handler = new Handler()
-  private var fab: FloatingActionButton = _
-  private var fabProgressCircle: FABProgressCircle = _
   var crossfader: Crossfader[CrossFadeSlidingPaneLayout] = _
   var drawer: Drawer = _
 
-  private var testCount: Int = _
-  private var statusText: TextView = _
-  private var txText: TextView = _
-  private var rxText: TextView = _
-  private var txRateText: TextView = _
-  private var rxRateText: TextView = _
-
+  private var rocket: ImageView = _
   private var currentFragment: ToolbarFragment = _
-  private lazy val profilesFragment = new ProfilesFragment()
+  private lazy val introFragment = new IntroFragment()
+  private lazy val myProfileFragment = new MyProfileFragment()
   private lazy val customRulesFragment = new CustomRulesFragment()
   private lazy val globalSettingsFragment = new GlobalSettingsFragment()
-  private lazy val aboutFragment = new AboutFragment()
+  private lazy val allFragments: Array[ToolbarFragment] = Array (
+    introFragment,
+    myProfileFragment,
+    customRulesFragment,
+    globalSettingsFragment
+  )
+  private lazy val DEFAULT_FRAGMENT = introFragment
+  private val DEFAULT_DRAWER_SELECTED = DRAWER_INTRO
   private lazy val customTabsIntent = new CustomTabsIntent.Builder()
-    .setToolbarColor(ContextCompat.getColor(this, R.color.material_primary_500))
+    .setToolbarColor(ContextCompat.getColor(this, R.color.primary_500))
     .build()
   def launchUrl(url: String): Unit = try customTabsIntent.launchUrl(this, Uri.parse(url)) catch {
     case _: ActivityNotFoundException => // Ignore
   }
 
+  val mainActivity = this
+  var drawerHeader: AccountHeader = _
+  var isInFront = false
+  var trafficEmptyShowed = false
+
   // Services
-  var state: Int = _
+  var state: Int = State.IDLE
   private val callback = new IShadowsocksServiceCallback.Stub {
-    def stateChanged(s: Int, profileName: String, m: String): Unit = handler.post(() => changeState(s, profileName, m))
+    def stateChanged(s: Int, profileName: String, m: String): Unit = handler.post(() => {
+      changeState(s, profileName, m)
+    })
     def trafficUpdated(profileId: Int, txRate: Long, rxRate: Long, txTotal: Long, rxTotal: Long): Unit =
-      handler.post(() => updateTraffic(profileId, txRate, rxRate, txTotal, rxTotal))
-    override def trafficPersisted(profileId: Int): Unit = handler.post(() => if (ProfilesFragment.instance != null)
-      ProfilesFragment.instance.onTrafficPersisted(profileId))
+      handler.post(() => {
+        updateTraffic(profileId, txRate, rxRate, txTotal, rxTotal)
+      })
+    override def trafficPersisted(profileId: Int): Unit = handler.post(() => {
+      for (f <- allFragments) {
+        if (f.isVisible)
+          f.onTrafficPersisted(profileId)
+      }
+    })
   }
 
-  private lazy val greyTint = ContextCompat.getColorStateList(MainActivity.this, R.color.material_primary_500)
-  private lazy val greenTint = ContextCompat.getColorStateList(MainActivity.this, R.color.material_green_700)
-  private def hideCircle() = try fabProgressCircle.hide() catch {
-    case _: NullPointerException =>
-  }
   private def changeState(s: Int, profileName: String = null, m: String = null) {
     s match {
-      case State.CONNECTING =>
-        fab.setImageResource(R.drawable.ic_start_busy)
-        fabProgressCircle.show()
-        statusText.setText(R.string.connecting)
-      case State.CONNECTED =>
-        if (state == State.CONNECTING) fabProgressCircle.beginFinalAnimation()
-        else fabProgressCircle.postDelayed(hideCircle, 1000)
-        fab.setImageResource(R.drawable.ic_start_connected)
-        statusText.setText(if (app.isNatEnabled) R.string.nat_connected else R.string.vpn_connected)
-      case State.STOPPING =>
-        fab.setImageResource(R.drawable.ic_start_busy)
-        if (state == State.CONNECTED) fabProgressCircle.show()  // ignore for stopped
-        statusText.setText(R.string.stopping)
-      case _ =>
-        fab.setImageResource(R.drawable.ic_start_idle)
-        fabProgressCircle.postDelayed(hideCircle, 1000)
+      case State.CONNECTING => ()
+      case State.STOPPING => rocketDown()
+      case State.CONNECTED => if (state != State.CONNECTED) rocketUp()
+      case _ => {
         if (m != null) {
           val snackbar = Snackbar.make(findViewById(R.id.snackbar),
             getString(R.string.vpn_error).formatLocal(Locale.ENGLISH, m), Snackbar.LENGTH_LONG)
@@ -136,27 +148,48 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
           snackbar.show()
           Log.e(TAG, "Error to start VPN service: " + m)
         }
-        statusText.setText(R.string.not_connected)
+      }
     }
     state = s
-    if (state == State.CONNECTED) fab.setBackgroundTintList(greenTint) else {
-      fab.setBackgroundTintList(greyTint)
-      updateTraffic(-1, 0, 0, 0, 0)
-      testCount += 1  // suppress previous test messages
+    // Notify all fragments
+    for (f <- allFragments) {
+      if (f.isVisible)
+        f.onStateChanged(s, profileName, m)
     }
-    if (ProfilesFragment.instance != null)
-      ProfilesFragment.instance.profilesAdapter.notifyDataSetChanged()  // refresh button enabled state
-    fab.setEnabled(false)
-    if (state == State.CONNECTED || state == State.STOPPED)
-      handler.postDelayed(() => fab.setEnabled(state == State.CONNECTED || state == State.STOPPED), 1000)
+    if (state != State.CONNECTED) {
+      updateTraffic(-1, 0, 0, 0, 0)
+    }
   }
+
   def updateTraffic(profileId: Int, txRate: Long, rxRate: Long, txTotal: Long, rxTotal: Long) {
-    txText.setText(TrafficMonitor.formatTraffic(txTotal))
-    rxText.setText(TrafficMonitor.formatTraffic(rxTotal))
-    txRateText.setText(TrafficMonitor.formatTraffic(txRate) + "/s")
-    rxRateText.setText(TrafficMonitor.formatTraffic(rxRate) + "/s")
-    val child = getFragmentManager.findFragmentById(R.id.fragment_holder).asInstanceOf[ToolbarFragment]
-    if (state != State.STOPPING && child != null) child.onTrafficUpdated(profileId, txRate, rxRate, txTotal, rxTotal)
+    // Notify all fragments
+    for (f <- allFragments) {
+      if (f.isVisible)
+        f.onTrafficUpdated(profileId, txRate, rxRate, txTotal, rxTotal)
+    }
+  }
+
+  private def rocketAnim(animRes: Int): Unit = {
+    rocket.setVisibility(View.VISIBLE)
+    val anim = AnimationUtils.loadAnimation(this, animRes)
+    anim.setAnimationListener(new Animation.AnimationListener {
+      override def onAnimationEnd(animation: Animation): Unit = {
+        rocket.setVisibility(View.GONE)
+      }
+      override def onAnimationRepeat(animation: Animation): Unit = {}
+      override def onAnimationStart(animation: Animation): Unit = {}
+    })
+    rocket.startAnimation(anim)
+  }
+
+  private def rocketUp(): Unit = {
+    rocket.setScaleY(-1)
+    rocketAnim(R.anim.rocket_up)
+  }
+
+  private def rocketDown(): Unit = {
+    rocket.setScaleY(1)
+    rocketAnim(R.anim.rocket_down)
   }
 
   override def onServiceConnected() {
@@ -167,7 +200,9 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
       snackbar.show()
     }
   }
-  override def onServiceDisconnected(): Unit = changeState(State.IDLE)
+  override def onServiceDisconnected(): Unit = {
+    changeState(State.IDLE)
+  }
 
   private def addDisableNatToSnackbar(snackbar: Snackbar) = snackbar.setAction(R.string.switch_to_vpn, (_ =>
     if (state == State.STOPPED) app.editor.putBoolean(Key.isNAT, false)): View.OnClickListener)
@@ -178,60 +213,45 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
     attachService(callback)
   }
 
-  override def onActivityResult(requestCode: Int, resultCode: Int, data: Intent): Unit = resultCode match {
-    case Activity.RESULT_OK => bgService.use(app.profileId)
-    case _ => Log.e(TAG, "Failed to start VpnService")
+  override def onActivityResult(requestCode: Int, resultCode: Int, data: Intent): Unit = {
+    resultCode match {
+      case Activity.RESULT_OK => bgService.use(app.profileId)
+      case _ => Log.e(TAG, "Failed to start VpnService")
+    }
   }
+
+  def drawerMenuItem(identifier: Long, name: Int, icon: Int): PrimaryDrawerItem =
+    new PrimaryDrawerItem().withName(name).withIcon(icon).withIdentifier(identifier).withIconTintingEnabled(true)
 
   override def onCreate(savedInstanceState: Bundle) {
     super.onCreate(savedInstanceState)
+    PingppLog.DEBUG = true
+
     setContentView(R.layout.layout_main)
+    rocket = findViewById(R.id.rocket).asInstanceOf[ImageView]
     val drawerBuilder = new DrawerBuilder()
       .withActivity(this)
       .withTranslucentStatusBar(true)
       .withHeader(R.layout.layout_header)
       .addDrawerItems(
-        new PrimaryDrawerItem()
-          .withIdentifier(DRAWER_PROFILES)
-          .withName(R.string.profiles)
-          .withIcon(AppCompatResources.getDrawable(this, R.drawable.ic_action_description))
-          .withIconTintingEnabled(true),
-        new PrimaryDrawerItem()
-          .withIdentifier(DRAWER_CUSTOM_RULES)
-          .withName(R.string.custom_rules)
-          .withIcon(AppCompatResources.getDrawable(this, R.drawable.ic_action_assignment))
-          .withIconTintingEnabled(true),
-        new PrimaryDrawerItem()
-          .withIdentifier(DRAWER_GLOBAL_SETTINGS)
-          .withName(R.string.settings)
-          .withIcon(AppCompatResources.getDrawable(this, R.drawable.ic_action_settings))
-          .withIconTintingEnabled(true)
+        drawerMenuItem(DRAWER_INTRO, R.string.home, R.drawable.ic_home_white_24dp),
+        drawerMenuItem(DRAWER_ACCOUNT, R.string.account, R.drawable.ic_account_circle_white_24dp),
+        drawerMenuItem(DRAWER_CUSTOM_RULES, R.string.custom_rules, R.drawable.ic_assignment_white_24dp),
+        drawerMenuItem(DRAWER_GLOBAL_SETTINGS, R.string.settings, R.drawable.ic_settings_white_24dp)
       )
       .addStickyDrawerItems(
-        new PrimaryDrawerItem()
-          .withIdentifier(DRAWER_FAQ)
-          .withName(R.string.faq)
-          .withIcon(AppCompatResources.getDrawable(this, R.drawable.ic_action_help_outline))
-          .withIconTintingEnabled(true)
-          .withSelectable(false),
-        new PrimaryDrawerItem()
-          .withIdentifier(DRAWER_RECOVERY)
-          .withName(R.string.recovery)
-          .withIcon(AppCompatResources.getDrawable(this, R.drawable.ic_navigation_refresh))
-          .withIconTintingEnabled(true)
-          .withSelectable(false),
-        new PrimaryDrawerItem()
-          .withIdentifier(DRAWER_ABOUT)
-          .withName(R.string.about)
-          .withIcon(AppCompatResources.getDrawable(this, R.drawable.ic_action_copyright))
-          .withIconTintingEnabled(true)
+        drawerMenuItem(DRAWER_FAQ, R.string.faq, R.drawable.ic_help_outline_white_24dp).withSelectable(false),
+        drawerMenuItem(DRAWER_AGREEMENT, R.string.agreement_title, R.drawable.ic_error_white_24dp).withSelectable(false),
+        drawerMenuItem(DRAWER_RECOVERY, R.string.recovery, R.drawable.ic_refresh_white_24dp).withSelectable(false),
+        drawerMenuItem(DRAWER_ABOUT, R.string.about, R.drawable.ic_copyright_white_24dp).withSelectable(false),
+        drawerMenuItem(DRAWER_LOGOUT, R.string.logout, R.drawable.ic_power_settings_new_white_24dp).withSelectable(false)
       )
       .withOnDrawerItemClickListener(this)
       .withActionBarDrawerToggle(true)
       .withSavedInstance(savedInstanceState)
+      .withSliderBackgroundDrawableRes(R.drawable.page_bg)
     val miniDrawerWidth = getResources.getDimension(R.dimen.material_mini_drawer_item)
-    if (getResources.getDisplayMetrics.widthPixels >=
-      getResources.getDimension(R.dimen.profile_item_max_width) + miniDrawerWidth) {
+    if (getResources.getDisplayMetrics.widthPixels >= getResources.getDimension(R.dimen.profile_item_max_width) + miniDrawerWidth) {
       drawer = drawerBuilder.withGenerateMiniDrawer(true).buildView()
       crossfader = new Crossfader[CrossFadeSlidingPaneLayout]()
       crossfader.withContent(findViewById(android.R.id.content))
@@ -239,6 +259,8 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
         .withSecond(drawer.getMiniDrawer.build(this), miniDrawerWidth.toInt)
         .withSavedInstance(savedInstanceState)
         .build()
+      crossfader.getFirst.setBackgroundResource(R.drawable.page_bg)
+      crossfader.getSecond.setBackgroundResource(R.color.dark_blue_700)
       if (getResources.getConfiguration.getLayoutDirection == View.LAYOUT_DIRECTION_RTL)
         crossfader.getCrossFadeSlidingPaneLayout.setShadowDrawableRight(
           AppCompatResources.getDrawable(this, R.drawable.material_drawer_shadow_right))
@@ -249,76 +271,36 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
         def crossfade(): Unit = crossfader.crossFade()
       })
     } else drawer = drawerBuilder.build()
-
+    drawer.setSelection(DEFAULT_DRAWER_SELECTED)
+    drawer.getStickyFooter.setBackgroundResource(android.R.color.transparent)
     val header = drawer.getHeader
     val title = header.findViewById(R.id.drawer_title).asInstanceOf[TextView]
     val tf = Typefaces.get(this, "fonts/Iceland.ttf")
     if (tf != null) title.setTypeface(tf)
 
-    if (savedInstanceState == null) displayFragment(profilesFragment)
-    statusText = findViewById(R.id.status).asInstanceOf[TextView]
-    txText = findViewById(R.id.tx).asInstanceOf[TextView]
-    txRateText = findViewById(R.id.txRate).asInstanceOf[TextView]
-    rxText = findViewById(R.id.rx).asInstanceOf[TextView]
-    rxRateText = findViewById(R.id.rxRate).asInstanceOf[TextView]
-    findViewById(R.id.stat).setOnClickListener(_ => if (state == State.CONNECTED && app.isVpnEnabled) {
-      testCount += 1
-      statusText.setText(R.string.connection_test_testing)
-      val id = testCount  // it would change by other code
-      Utils.ThrowableFuture {
-        // Based on: https://android.googlesource.com/platform/frameworks/base/+/master/services/core/java/com/android/server/connectivity/NetworkMonitor.java#640
-        autoDisconnect(new URL("https", "www.google.com", "/generate_204").openConnection()
-          .asInstanceOf[HttpURLConnection]) { conn =>
-          conn.setConnectTimeout(5 * 1000)
-          conn.setReadTimeout(5 * 1000)
-          conn.setInstanceFollowRedirects(false)
-          conn.setUseCaches(false)
-          if (testCount == id) {
-            var result: String = null
-            var success = true
-            try {
-              val start = currentTimeMillis
-              conn.getInputStream
-              val elapsed = currentTimeMillis - start
-              val code = conn.getResponseCode
-              if (code == 204 || code == 200 && conn.getContentLength == 0)
-                result = getString(R.string.connection_test_available, elapsed: java.lang.Long)
-              else throw new Exception(getString(R.string.connection_test_error_status_code, code: Integer))
-            } catch {
-              case e: Exception =>
-                success = false
-                result = getString(R.string.connection_test_error, e.getMessage)
-            }
-            if (testCount == id) handler.post(() => if (success) statusText.setText(result) else {
-              statusText.setText(R.string.connection_test_fail)
-              Snackbar.make(findViewById(R.id.snackbar), result, Snackbar.LENGTH_LONG).show()
-            })
-          }
-        }
-      }
-    })
+    if (savedInstanceState == null) displayFragment(DEFAULT_FRAGMENT)
 
-    fab = findViewById(R.id.fab).asInstanceOf[FloatingActionButton]
-    fabProgressCircle = findViewById(R.id.fabProgressCircle).asInstanceOf[FABProgressCircle]
-    fab.setOnClickListener(_ => if (state == State.CONNECTED) bgService.use(-1) else Utils.ThrowableFuture {
-      if (app.isNatEnabled) bgService.use(app.profileId) else {
-        val intent = VpnService.prepare(this)
-        if (intent != null) startActivityForResult(intent, REQUEST_CONNECT)
-        else handler.post(() => onActivityResult(REQUEST_CONNECT, Activity.RESULT_OK, null))
-      }
-    })
-    fab.setOnLongClickListener(_ => {
-      Utils.positionToast(Toast.makeText(this, if (state == State.CONNECTED) R.string.stop else R.string.connect,
-        Toast.LENGTH_SHORT), fab, getWindow, 0, Utils.dpToPx(this, 8)).show()
-      true
-    })
-
-    changeState(State.IDLE) // reset everything to init state
     handler.post(() => attachService(callback))
     app.settings.registerOnSharedPreferenceChangeListener(this)
 
     val intent = getIntent
     if (intent != null) handleShareIntent(intent)
+  }
+
+  def startConnection(): Unit = {
+    MobclickAgent.onEvent(this, "StartConnection")
+    Utils.ThrowableFuture {
+      if (app.isNatEnabled) bgService.use(app.profileId) else {
+        val intent = VpnService.prepare(this)
+        if (intent != null) startActivityForResult(intent, REQUEST_CONNECT)
+        else handler.post(() => onActivityResult(REQUEST_CONNECT, Activity.RESULT_OK, null))
+      }
+    }
+  }
+
+  def stopConnection(): Unit = {
+    MobclickAgent.onEvent(this, "StopConnection")
+    bgService.use(-1)
   }
 
   override def onNewIntent(intent: Intent) {
@@ -345,7 +327,7 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
     new AlertDialog.Builder(this)
       .setTitle(R.string.add_profile_dialog)
       .setPositiveButton(R.string.yes, ((_, _) =>
-        profiles.foreach(app.profileManager.createProfile)): DialogInterface.OnClickListener)
+        profiles.foreach(app.profileManager.createOrUpdateProfile)): DialogInterface.OnClickListener)
       .setNegativeButton(R.string.no, null)
       .setMessage(profiles.mkString("\n"))
       .create()
@@ -368,7 +350,8 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
 
   override def onItemClick(view: View, position: Int, drawerItem: IDrawerItem[_, _ <: ViewHolder]): Boolean = {
     drawerItem.getIdentifier match {
-      case DRAWER_PROFILES => displayFragment(profilesFragment)
+      case DRAWER_ACCOUNT => displayFragment(myProfileFragment)
+      case DRAWER_INTRO => displayFragment(introFragment)
       case DRAWER_RECOVERY =>
         app.track("GlobalConfigFragment", "reset")
         if (bgService != null) bgService.use(-1)
@@ -382,22 +365,66 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
           handler.sendEmptyMessage(0)
         }
       case DRAWER_GLOBAL_SETTINGS => displayFragment(globalSettingsFragment)
-      case DRAWER_ABOUT =>
-        app.track(TAG, "about")
-        displayFragment(aboutFragment)
-      case DRAWER_FAQ => launchUrl(getString(R.string.faq_url))
+      case DRAWER_AGREEMENT => displayWebFragment(R.string.agreement_title, "https://rallets.com/agreement")
+      case DRAWER_FAQ => displayWebFragment(R.string.faq, "https://rallets.com/faq")
+      case DRAWER_ABOUT => displayWebFragment(R.string.about, "file:///android_asset/pages/about.html")
       case DRAWER_CUSTOM_RULES => displayFragment(customRulesFragment)
+      case DRAWER_LOGOUT => RUtils.showAlert(this, getString(R.string.confirm_logout_title), null, () => {
+        bgService.use(-1)
+        RUtils.logout(this)
+        finish()
+      })
     }
     true  // unexpected cases will throw exception
   }
 
+
+  private def ensureLogin() {
+    if (isInFront && !RUtils.loggedIn) {
+      if (bgService != null) bgService.use(-1)
+      startActivity(new Intent(mainActivity, classOf[LoginActivity]))
+      finish()
+    } else {
+      introFragment.notifyDataSetChanged()
+      myProfileFragment.notifyDataSetChanged()
+    }
+  }
+
+  private val ralletsReceiver: BroadcastReceiver = new BroadcastReceiver() {
+    override def onReceive(context: Context, intent: Intent) = {
+      RUtils.processSystemNotification(MainActivity.this)
+      if (!trafficEmptyShowed && Notification.one.ok && RUtils.isTrafficEmpty()) {
+        MobclickAgent.onEvent(MainActivity.this, "AlertTrafficEmpty")
+        if (bgService != null) bgService.use(-1)
+        RUtils.showAlert(MainActivity.this, getString(R.string.new_message), getString(R.string.traffic_empty_alert), () => {
+          val intent = new Intent(MainActivity.this, classOf[PaymentActivity])
+          startActivity(intent)
+          MobclickAgent.onEvent(MainActivity.this, "AlertTrafficEmpty-Confirmed")
+        })
+        trafficEmptyShowed = true
+      }
+      ensureLogin()
+    }
+  }
+
   protected override def onResume() {
     super.onResume()
+    isInFront = true
+    ShadowsocksApplication.app.ralletsNotification()
+    Log.d(MainActivity.TAG, "registerReceiver(ralletsReceiver)")
+    registerReceiver(ralletsReceiver, new IntentFilter(IntentID.ralletsNotification))
     app.refreshContainerHolder()
-    state match {
-      case State.STOPPING | State.CONNECTING =>
-      case _ => hideCircle()
+    ensureLogin()
+    MobclickAgent.onResume(this)
+  }
+
+  protected override def onPause(): Unit = {
+    isInFront = false
+    try unregisterReceiver(ralletsReceiver) catch {
+      case e: Exception => Log.d(MainActivity.TAG, "unregisterReceiver(ralletsReceiver) failed" + e.toString)
     }
+    super.onPause()
+    MobclickAgent.onPause(this)
   }
 
   override def onStart() {
@@ -406,9 +433,9 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
   }
 
   override def onBackPressed(): Unit =
-    if (drawer.isDrawerOpen) drawer.closeDrawer() else if (currentFragment != profilesFragment) {
-      displayFragment(profilesFragment)
-      drawer.setSelection(DRAWER_PROFILES)
+    if (drawer.isDrawerOpen) drawer.closeDrawer() else if (currentFragment != introFragment) {
+      displayFragment(introFragment)
+      drawer.setSelection(DRAWER_INTRO)
     } else super.onBackPressed()
 
   override def onStop() {
@@ -429,4 +456,16 @@ class MainActivity extends Activity with ServiceBoundContext with Drawer.OnDrawe
     new BackupManager(this).dataChanged()
     handler.removeCallbacksAndMessages(null)
   }
+
+  def showSnackbar(message: String): Unit = {
+    if (!Option(message).getOrElse("").isEmpty) {
+      val snackbar = Snackbar.make(findViewById(R.id.snackbar), message, Snackbar.LENGTH_LONG)
+      snackbar.show()
+    }
+  }
+
+  def displayWebFragment(titleId: Int, url: String): Unit = {
+    displayFragment(new WebViewFragment(titleId, url))
+  }
 }
+

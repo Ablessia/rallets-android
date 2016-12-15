@@ -29,10 +29,43 @@ import android.text.TextUtils
 import android.util.Base64
 import com.github.shadowsocks.utils.Key
 import com.j256.ormlite.field.{DataType, DatabaseField}
+import com.rallets.RUtils
+import org.json.JSONObject
+
+object Profile {
+  def fromJSONObject(data: JSONObject): Profile = {
+    val profile = new Profile
+    try {
+      profile._id = data.getString("id")
+      profile.method = data.getString("method")
+      profile.password = data.getString("password")
+      profile.host = data.getString("server")
+      profile.remotePort = data.getInt("server_port")
+      profile.name = data.getString("remarks")
+      profile.kcp = data.getBoolean("kcp")
+      profile.countryCode = data.optString("country", "CN")
+      if (profile.kcp) {
+        if (data.has("kcp_port")) profile.kcpPort = data.getInt("kcp_port")
+        if (data.has("kcpcli")) profile.kcpcli = data.getString("kcpcli")
+      }
+      profile
+    } catch {
+      case e: Exception => {
+        RUtils.log(e.toString)
+        profile
+      }
+    }
+  }
+}
 
 class Profile {
+  // id maintained by SQLite
   @DatabaseField(generatedId = true)
   var id: Int = _
+
+  // id from rallets
+  @DatabaseField
+  var _id: String = ""
 
   @DatabaseField
   var name: String = ""
@@ -98,6 +131,9 @@ class Profile {
   @DatabaseField
   var kcpcli: String = "--crypt none --mode normal --mtu 1200 --nocomp --dscp 46 --parityshard 0"
 
+  @DatabaseField
+  var countryCode: String = "CN"
+
   def formattedAddress: String = (if (host.contains(":")) "[%s]:%d" else "%s:%d").format(host, remotePort)
   def nameIsEmpty: Boolean = name == null || name.isEmpty
   def getName: String = if (nameIsEmpty) formattedAddress else name
@@ -109,6 +145,7 @@ class Profile {
   def isMethodUnsafe: Boolean = "table".equalsIgnoreCase(method) || "rc4".equalsIgnoreCase(method)
 
   def serialize(editor: SharedPreferences.Editor): SharedPreferences.Editor = editor
+    .putString(Key._id, _id)
     .putString(Key.name, name)
     .putString(Key.host, host)
     .putInt(Key.localPort, localPort)
@@ -126,9 +163,11 @@ class Profile {
     .putBoolean(Key.kcp, kcp)
     .putInt(Key.kcpPort, kcpPort)
     .putString(Key.kcpcli, kcpcli)
+    .putString(Key.countryCode, countryCode)
     .remove(Key.dirty)
   def deserialize(pref: SharedPreferences) {
     // It's assumed that default values are never used, so 0/false/null is always used even if that isn't the case
+    _id = pref.getString(Key._id, null)
     name = pref.getString(Key.name, null)
     host = pref.getString(Key.host, null)
     localPort = pref.getInt(Key.localPort, 0)
@@ -146,5 +185,6 @@ class Profile {
     kcp = pref.getBoolean(Key.kcp, false)
     kcpPort = pref.getInt(Key.kcpPort, 0)
     kcpcli = pref.getString(Key.kcpcli, null)
+    countryCode = pref.getString(Key.countryCode, null)
   }
 }

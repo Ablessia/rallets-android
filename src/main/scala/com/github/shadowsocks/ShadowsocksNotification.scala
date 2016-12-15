@@ -54,7 +54,7 @@ class ShadowsocksNotification(private val service: BaseService, profileName: Str
 
   private val builder = new NotificationCompat.Builder(service)
     .setWhen(0)
-    .setColor(ContextCompat.getColor(service, R.color.material_primary_500))
+    .setColor(ContextCompat.getColor(service, R.color.primary_500))
     .setTicker(service.getString(R.string.forward_success))
     .setContentTitle(profileName)
     .setContentIntent(PendingIntent.getActivity(service, 0, new Intent(service, classOf[MainActivity])

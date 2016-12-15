@@ -40,6 +40,7 @@ class GlobalConfigFragment extends PreferenceFragment {
     }
     switch.setChecked(BootReceiver.getEnabled(getActivity))
 
+    /*
     val tfo = findPreference(Key.tfo).asInstanceOf[SwitchPreference]
     tfo.setChecked(TcpFastOpen.sendEnabled)
     tfo.setOnPreferenceChangeListener((_, v) => {
@@ -53,5 +54,6 @@ class GlobalConfigFragment extends PreferenceFragment {
       tfo.setEnabled(false)
       tfo.setSummary(getString(R.string.tcp_fastopen_summary_unsupported, java.lang.System.getProperty("os.version")))
     }
+    */
   }
 }

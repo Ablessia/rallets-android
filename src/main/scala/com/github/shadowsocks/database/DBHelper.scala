@@ -46,7 +46,7 @@ object DBHelper {
 }
 
 class DBHelper(val context: Context)
-  extends OrmLiteSqliteOpenHelper(context, DBHelper.PROFILE, null, 21) {
+  extends OrmLiteSqliteOpenHelper(context, DBHelper.PROFILE, null, 22) {
   import DBHelper._
 
   lazy val profileDao: Dao[Profile, Int] = getDao(classOf[Profile])
@@ -132,6 +132,10 @@ class DBHelper(val context: Context)
 
         if (oldVersion < 21) {
           profileDao.executeRawNoArgs("ALTER TABLE `profile` ADD COLUMN remoteDns VARCHAR DEFAULT '8.8.8.8';")
+        }
+
+        if (oldVersion < 22) {
+          profileDao.executeRawNoArgs("ALTER TABLE `profile` ADD COLUMN countryCode VARCHAR DEFAULT 'CN';")
         }
       } catch {
         case ex: Exception =>

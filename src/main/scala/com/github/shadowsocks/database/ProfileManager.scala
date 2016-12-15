@@ -23,6 +23,7 @@ package com.github.shadowsocks.database
 import android.util.Log
 import com.github.shadowsocks.ProfilesFragment
 import com.github.shadowsocks.ShadowsocksApplication.app
+import com.rallets.RUtils
 
 object ProfileManager {
   private final val TAG = "ProfileManager"
@@ -31,8 +32,8 @@ object ProfileManager {
 class ProfileManager(dbHelper: DBHelper) {
   import ProfileManager._
 
-  def createProfile(p: Profile = null): Profile = {
-    val profile = if (p == null) new Profile else p
+  def createOrUpdateProfile(profile: Profile = null): Profile = {
+    if (profile == null) return null
     profile.id = 0
     try {
       app.currentProfile match {
@@ -46,11 +47,26 @@ class ProfileManager(dbHelper: DBHelper) {
           profile.udpdns = oldProfile.udpdns
         case _ =>
       }
-      val last = dbHelper.profileDao.queryRaw(dbHelper.profileDao.queryBuilder.selectRaw("MAX(userOrder)")
-        .prepareStatementString).getFirstResult
+      val dao = dbHelper.profileDao
+      val last = dao.queryRaw(dao.queryBuilder.selectRaw("MAX(userOrder)").prepareStatementString).getFirstResult
       if (last != null && last.length == 1 && last(0) != null) profile.userOrder = last(0).toInt + 1
-      dbHelper.profileDao.createOrUpdate(profile)
-      if (ProfilesFragment.instance != null) ProfilesFragment.instance.profilesAdapter.add(profile)
+      val sameProfiles = dao.queryForEq("_id", profile._id)
+      if (sameProfiles.isEmpty) {
+        dao.create(profile)
+        if (ProfilesFragment.instance != null) ProfilesFragment.instance.profilesAdapter.add(profile)
+      } else {
+        val updateBuilder = dao.updateBuilder()
+        updateBuilder.where().eq("_id", profile._id)
+        updateBuilder.updateColumnValue("localPort", profile.localPort)
+          .updateColumnValue("remotePort", profile.remotePort)
+          .updateColumnValue("host", profile.host)
+          .updateColumnValue("name", profile.name)
+          .updateColumnValue("password", profile.password)
+          .updateColumnValue("kcp", profile.kcp)
+          .updateColumnValue("kcpPort", profile.kcpPort)
+          .updateColumnValue("kcpcli", profile.kcpcli).update()
+        ProfilesFragment.instance.profilesAdapter.deepRefreshId(sameProfiles.get(0).id)
+      }
     } catch {
       case ex: Exception =>
         Log.e(TAG, "addProfile", ex)
@@ -94,6 +110,18 @@ class ProfileManager(dbHelper: DBHelper) {
       case ex: Exception =>
         Log.e(TAG, "delProfile", ex)
         app.track(ex)
+        false
+    }
+  }
+
+  def delAllProfile: Boolean = {
+    try {
+      dbHelper.profileDao.queryRaw("delete from profile")
+      dbHelper.profileDao.queryRaw("update sqlite_sequence SET seq = 0 where name ='profile'")
+      true
+    } catch {
+      case ex: Exception =>
+        Log.e(TAG, "delAllProfile", ex)
         false
     }
   }

@@ -23,6 +23,7 @@ package com.github.shadowsocks
 import android.app.Fragment
 import android.os.Bundle
 import android.support.v7.widget.Toolbar
+import android.util.Log
 import android.view.View
 
 class ToolbarFragment extends Fragment {
@@ -35,5 +36,7 @@ class ToolbarFragment extends Fragment {
     if (activity.crossfader == null) activity.drawer.setToolbar(activity, toolbar, true)
   }
 
+  def onStateChanged(s: Int, profileName: String = null, m: String = null): Unit = ()
   def onTrafficUpdated(profileId: Int, txRate: Long, rxRate: Long, txTotal: Long, rxTotal: Long): Unit = ()
+  def onTrafficPersisted(profileId: Int): Unit = ()
 }

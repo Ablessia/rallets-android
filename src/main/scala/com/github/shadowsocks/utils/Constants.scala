@@ -130,6 +130,7 @@ object ConfigUtils {
 }
 
 object Key {
+  val _id = "id"
   val id = "profileId"
   val name = "profileName"
 
@@ -156,11 +157,22 @@ object Key {
   val kcp = "kcp"
   val kcpPort = "kcpPort"
   val kcpcli = "kcpcli"
+  val countryCode = "countryCode"
 
   val dirty = "profileDirty"
 
   val tfo = "tcp_fastopen"
   val currentVersionCode = "currentVersionCode"
+
+  val email = "email"
+  val mobile = "mobile"
+  val maxLogins = "maxLogins"
+  val nickname = "nickname"
+  val area = "area"
+  val balance = "balance"
+  val endTime = "endTime"
+  val premiumTraffic = "premiumTraffic"
+  val invitationCode = "invitationCode"
 }
 
 object State {

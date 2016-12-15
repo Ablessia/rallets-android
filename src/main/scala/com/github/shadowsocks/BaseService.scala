@@ -38,6 +38,7 @@ import com.github.shadowsocks.acl.Acl
 import com.github.shadowsocks.aidl.{IShadowsocksService, IShadowsocksServiceCallback}
 import com.github.shadowsocks.database.Profile
 import com.github.shadowsocks.utils._
+import com.rallets.RUtils
 import okhttp3.{Dns, FormBody, OkHttpClient, Request}
 
 import scala.collection.mutable
@@ -115,7 +116,8 @@ trait BaseService extends Service {
 
     override def use(profileId: Int): Unit = synchronized(if (profileId < 0) stopRunner(stopService = true) else {
       val profile = app.profileManager.getProfile(profileId).orNull
-      if (profile == null) stopRunner(stopService = true, getString(R.string.profile_empty)) else state match {
+      RUtils.log(profile.toString)
+      if (profile == null) stopRunner(stopService = true, getString(R.string.server_empty)) else state match {
         case State.STOPPED => if (checkProfile(profile)) startRunner(profile)
         case State.CONNECTED => if (profileId != BaseService.this.profile.id && checkProfile(profile)) {
           stopRunner(stopService = false)

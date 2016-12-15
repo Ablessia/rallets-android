@@ -153,13 +153,6 @@ class AppManager extends AppCompatActivity with OnMenuItemClickListener {
           case _ => Toast.makeText(this, R.string.action_export_err, Toast.LENGTH_SHORT).show()
         }
         return true
-      case R.id.action_export =>
-        val bypass = app.settings.getBoolean(Key.bypass, false)
-        val proxiedAppString = app.settings.getString(Key.individual, null)
-        val clip = ClipData.newPlainText(Key.individual, bypass + "\n" + proxiedAppString)
-        clipboard.setPrimaryClip(clip)
-        Toast.makeText(this, R.string.action_export_msg, Toast.LENGTH_SHORT).show()
-        return true
       case R.id.action_import =>
         if (clipboard.hasPrimaryClip) {
           val proxiedAppSequence = clipboard.getPrimaryClip.getItemAt(0).getText
